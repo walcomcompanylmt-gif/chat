@@ -1,0 +1,158 @@
+<!--
+Simple front-end Chat App
+Files: index.html, styles.css, script.js
+Purpose: demo chat UI using only HTML/CSS/JS. Login by phone number (no backend). Messages sync across tabs using BroadcastChannel (with localStorage fallback).
+Usage: open `index.html` in a browser (preferably via a local server for BroadcastChannel/storage events), login with a phone number, open another tab and login with a different phone number to chat.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QuickChat — Phone Login Demo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">QuickChat</div>
+      <div class="user-card" id="meCard" hidden>
+        <div class="avatar" id="meAvatar"></div>
+        <div class="me-info">
+          <div id="mePhone" class="me-phone"></div>
+          <div id="meStatus" class="me-status">Online</div>
+        </div>
+        <button id="logoutBtn" class="btn small">Logout</button>
+      </div>
+      <div class="users-section">
+        <h3>Active Users</h3>
+        <ul id="usersList" class="users-list"></ul>
+      </div>
+
+      <div class="charts-section">
+        <h3>Charts</h3>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <button id="createChartBtn" class="btn small primary">Create Chart</button>
+          <button id="refreshCharts" class="btn small">Refresh</button>
+        </div>
+        <div id="chartsList" class="charts-list muted small">No charts yet</div>
+      </div>
+
+      <div class="theme-note">Built with HTML, CSS & JS ✅</div>
+      <div class="help small muted" style="margin-top:8px">Quick testing: open another tab, visit this page, login with a different phone, and messages will sync. For best results, serve files via a simple local server (Live Server or <code>python -m http.server</code>).</div>
+    </aside>
+
+    <main class="chat-area">
+      <header class="chat-header">
+        <div class="chat-title">Public Room</div>
+        <div class="chat-subtitle" id="headerSubtitle">Join by phone to chat with others</div>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <button type="button" id="attachBtn" class="btn">📎</button>
+        <input type="file" id="fileInput" multiple hidden />
+        <button type="button" id="recordBtn" class="btn">🎙️</button>
+        <button type="button" id="emojiBtn" class="btn emoji">😊</button>
+        <input id="msgInput" class="msg-input" placeholder="Type a message..." />
+        <button id="sendBtn" class="btn primary" type="submit">Send</button>
+      </form>
+
+      <div id="attachmentsPreview" class="attachments-preview"></div>
+      <div class="muted small" style="padding:6px 14px">You can upload images, videos, audio and other files. Files are stored locally in your browser (respect your browser's storage limits).</div>
+    </main>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+      <div class="modal-card">
+        <h2>Welcome to QuickChat</h2>
+        <p>Enter your phone number to join the public room.</p>
+        <form id="loginForm" autocomplete="off">
+          <label for="country">Country</label>
+          <select id="country" required>
+            <option value="+256" data-country="UG">Uganda +256</option>
+            <option value="+254" data-country="KE">Kenya +254</option>
+            <option value="+251" data-country="ET">Ethiopia +251</option>
+            <option value="+1" data-country="US">United States +1</option>
+            <option value="+44" data-country="GB">United Kingdom +44</option>
+            <option value="+250" data-country="RW">Rwanda +250</option>
+            <option value="+234" data-country="NG">Nigeria +234</option>
+            <option value="+49" data-country="DE">Germany +49</option>
+          </select>
+
+          <label for="phone">Phone number</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="countryCode" readonly style="width:92px;padding:10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.03);color:inherit" />
+            <input id="phone" name="phone" inputmode="numeric" pattern="[0-9]*" placeholder="e.g., 771234567" required />
+          </div>
+
+          <label for="display">Display name <span class="muted">(optional)</span></label>
+          <input id="display" name="display" placeholder="e.g., Alex" />
+
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+            <button id="sendCodeBtn" class="btn primary" type="button">Send verification code</button>
+            <button id="joinBtn" class="btn" type="button" style="display:none">Join (legacy)</button>
+          </div>
+
+          <div id="verifyArea" style="display:none;margin-top:12px">
+            <label for="code">Verification code</label>
+            <input id="code" placeholder="6-digit code" inputmode="numeric" />
+            <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+              <button id="verifyBtn" class="btn primary" type="button">Verify & Join</button>
+              <button id="resendBtn" class="btn" type="button">Resend</button>
+            </div>
+            <div class="muted small" id="codeHelp">If Firebase is configured and phone auth enabled, you will receive an SMS. Otherwise a test code will be shown here for demo use.</div>
+          </div>
+
+        </form>
+        <div id="recaptcha-container"></div>
+        <p class="muted small">This demo stores messages locally and syncs across tabs. No server involved unless you configure Firebase for phone auth.</p>
+      </div>
+    </div>
+
+    <!-- Create Chart Modal -->
+    <div id="createChartModal" class="modal" style="display:none">
+      <div class="modal-card">
+        <h2>Create Chart</h2>
+        <form id="createChartForm">
+          <label>Title</label>
+          <input id="chartTitle" placeholder="e.g., Weekly Sales" />
+          <label>Type</label>
+          <select id="chartType"><option value="line">Line</option><option value="bar">Bar</option><option value="pie">Pie</option></select>
+          <label>Data (CSV or simple: label,value per line)</label>
+          <textarea id="chartCSV" rows="6" placeholder="Jan,10\nFeb,20\nMar,15"></textarea>
+          <div style="margin-top:8px">
+            <button id="previewChartBtn" class="btn">Preview</button>
+            <button id="saveChartBtn" class="btn primary" type="button">Save Chart</button>
+            <button id="closeCreateChart" class="btn" type="button">Close</button>
+          </div>
+          <div style="margin-top:12px">
+            <canvas id="chartPreview" width="400" height="220"></canvas>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Chart Viewer Modal -->
+    <div id="chartViewer" class="modal" style="display:none">
+      <div class="modal-card">
+        <h2 id="viewerTitle">Chart</h2>
+        <canvas id="viewerCanvas" width="640" height="360"></canvas>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <button id="downloadChart" class="btn primary">Download PNG</button>
+          <button id="deleteChart" class="btn" style="display:none">Delete</button>
+          <button id="closeViewer" class="btn">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart.js and optional Firebase (use FIREBASE_CONFIG global to enable Firestore saving) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+
+  <script src="script.js"></script>
+</body>
+</html>
